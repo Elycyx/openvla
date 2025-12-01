@@ -1,0 +1,3 @@
+[submodule "LLMPruner"]
+	path = LLMPruner
+	url = https://github.com/Elycyx/LLM-Pruner.git
