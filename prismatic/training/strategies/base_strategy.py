@@ -10,7 +10,7 @@ heavy lifting.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 import torch
 import torch.distributed as dist
@@ -250,6 +250,9 @@ class TrainingStrategy(ABC):
         metrics: VLAMetrics,
         save_interval: int = 2500,
         save_full_model: bool = True,
+        compute_importance: bool = False,
+        importance_compute_steps: int = 1000,
+        importance_fn: Optional[Callable[..., Dict[str, Any]]] = None,
     ) -> None:
         """Run the VLA training loop for the given `dataset` and `collator`; log losses, action metrics to `metrics`."""
         assert isinstance(vla_dataset, IterableDataset), "VLA training expects an IterableDataset!"
@@ -371,6 +374,18 @@ class TrainingStrategy(ABC):
                 # Push Metrics
                 metrics.commit(global_step=metrics.global_step + 1, epoch=epoch, lr=self.lr_scheduler.get_last_lr()[0])
                 status = metrics.push()
+
+                # Compute Parameter Importance (only on rank zero, only for DDP strategy)
+                if compute_importance and importance_fn is not None:
+                    if (metrics.global_step > 0) and (metrics.global_step % importance_compute_steps == 0):
+                        if overwatch.is_rank_zero():
+                            overwatch.info(f"Computing parameter importance at step {metrics.global_step}")
+                            importance_fn(
+                                model=self.vlm,
+                                optimizer=self.optimizer,
+                                step=metrics.global_step,
+                                run_dir=metrics.run_dir,
+                            )
 
                 # Check for Save Interval or Max Steps & Save Checkpoint
                 if (terminate := (self.max_steps is not None and metrics.global_step >= self.max_steps)) or (

@@ -48,6 +48,7 @@ from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
+from prismatic.vla.importance import compute_importance_full, compute_importance_lora
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -104,8 +105,13 @@ class FinetuneConfig:
 
     # Tracking Parameters
     wandb_project: str = "openvla"                                  # Name of W&B project to log to (use default!)
-    wandb_entity: str = "stanford-voltron"                          # Name of entity to log under
+    wandb_entity: str = "cyx0307-shanghai-jiao-tong-university"                         # Name of entity to log under
     run_id_note: Optional[str] = None                               # Extra note for logging, Weights & Biases
+
+    # Importance Estimation Parameters
+    compute_importance: bool = True                                 # Whether to compute parameter importance
+    importance_compute_steps: int = 1000                            # Interval for importance computation (in steps)
+    lora_importance_reduction: str = "sum"                        # LoRA importance reduction: "sum", "mean", "weighted"
 
     # fmt: on
 
@@ -317,10 +323,36 @@ def finetune(cfg: FinetuneConfig) -> None:
                 optimizer.zero_grad()
                 progress.update()
 
+                # Recompute gradient_step_idx after optimizer step (for gradient accumulation compatibility)
+                current_step = (batch_idx + 1) // cfg.grad_accumulation_steps
+
+                # Compute Parameter Importance
+                if cfg.compute_importance and current_step > 0:
+                    if current_step % cfg.importance_compute_steps == 0:
+                        if distributed_state.is_main_process:
+                            print(f"Computing parameter importance at step {current_step}")
+                            if cfg.use_lora:
+                                compute_importance_lora(
+                                    model=vla,
+                                    optimizer=optimizer,
+                                    step=current_step,
+                                    run_dir=run_dir,
+                                    reduction=cfg.lora_importance_reduction,
+                                )
+                            else:
+                                compute_importance_full(
+                                    model=vla,
+                                    optimizer=optimizer,
+                                    step=current_step,
+                                    run_dir=run_dir,
+                                )
+
             # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
-            if gradient_step_idx > 0 and gradient_step_idx % cfg.save_steps == 0:
+            # Use current_step which is computed after optimizer.step() for gradient accumulation compatibility
+            current_step = (batch_idx + 1) // cfg.grad_accumulation_steps
+            if current_step > 0 and current_step % cfg.save_steps == 0:
                 if distributed_state.is_main_process:
-                    print(f"Saving Model Checkpoint for Step {gradient_step_idx}")
+                    print(f"Saving Model Checkpoint for Step {current_step}")
 
                     # If LoRA, we first save adapter weights, then merge into full model; otherwise, default save!
                     save_dir = adapter_dir if cfg.use_lora else run_dir
@@ -345,10 +377,10 @@ def finetune(cfg: FinetuneConfig) -> None:
                             # Overwrite latest checkpoint
                             merged_vla.save_pretrained(run_dir)
 
-                            print(f"Saved Model Checkpoint for Step {gradient_step_idx} at: {run_dir}")
+                            print(f"Saved Model Checkpoint for Step {current_step} at: {run_dir}")
                         else:
                             # Prepare to save checkpoint in new directory
-                            checkpoint_dir = Path(str(run_dir) + f"--{gradient_step_idx}_chkpt")
+                            checkpoint_dir = Path(str(run_dir) + f"--{current_step}_chkpt")
                             os.makedirs(checkpoint_dir, exist_ok=True)
 
                             # Save dataset statistics to new directory
@@ -358,13 +390,13 @@ def finetune(cfg: FinetuneConfig) -> None:
                             processor.save_pretrained(checkpoint_dir)
                             merged_vla.save_pretrained(checkpoint_dir)
 
-                            print(f"Saved Model Checkpoint for Step {gradient_step_idx} at: {checkpoint_dir}")
+                            print(f"Saved Model Checkpoint for Step {current_step} at: {checkpoint_dir}")
 
                 # Block on Main Process Checkpointing
                 dist.barrier()
 
             # Stop training when max_steps is reached
-            if gradient_step_idx == cfg.max_steps:
+            if current_step == cfg.max_steps:
                 print(f"Max step {cfg.max_steps} reached! Stopping training...")
                 break
 

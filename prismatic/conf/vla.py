@@ -198,6 +198,28 @@ class Exp_SigLIP_224px_Droid_Wipe(Exp_SigLIP_224px_Bridge):
     data_mix: str = "droid_wipe"
 
 
+# === [4 GPU] DINO-SigLIP 224px + Libero Spatial ===
+@dataclass
+class Exp_DinoSigLIP_224px_Libero_Spatial(Exp_SigLIP_224px_Bridge):
+    vla_id: str = "prism-dinosiglip-224px+mx-libero_spatial"
+    base_vlm: Union[str, Path] = "prism-dinosiglip-224px+7b"
+
+    # Data Mixture Parameters
+    data_mix: str = "libero_spatial"
+    shuffle_buffer_size: int = 100_000
+
+    # Optimization Parameters for 4 GPU
+    expected_world_size: int = 4
+    global_batch_size: int = 64
+    per_device_batch_size: int = 16
+
+    learning_rate: float = 2e-5
+    weight_decay: float = 0.0
+    max_grad_norm: float = 1.0
+    lr_scheduler_type: str = "constant"
+    warmup_ratio: float = 0.0
+
+
 # === Define a VLA Registry Enum for Reference & Validation ===
 @unique
 class VLARegistry(Enum):
@@ -224,6 +246,9 @@ class VLARegistry(Enum):
 
     # === DROID Fine-tuning Configs ===
     SIGLIP_224PX_MX_DROID_WIPE = Exp_SigLIP_224px_Droid_Wipe
+
+    # === Libero Fine-tuning Configs ===
+    DINOSIGLIP_224PX_MX_LIBERO_SPATIAL = Exp_DinoSigLIP_224px_Libero_Spatial
 
     @property
     def vla_id(self) -> str:

@@ -34,6 +34,7 @@ from prismatic.training import VLAMetrics, get_train_strategy
 from prismatic.util import set_global_seed
 from prismatic.vla import get_vla_dataset_and_collator
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
+from prismatic.vla.importance import compute_importance_full
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -79,6 +80,10 @@ class TrainConfig:
     trackers: Tuple[str, ...] = ("jsonl", "wandb")                  # Trackers to initialize (if W&B, add config!)
     wandb_project: str = "openvla"                                  # Name of W&B project to log to (use default!)
     wandb_entity: str = "stanford-voltron"                          # Name of entity to log under
+
+    # Importance Estimation Parameters
+    compute_importance: bool = True                                 # Whether to compute parameter importance
+    importance_compute_steps: int = 1000                            # Interval for importance computation (in steps)
 
     def __post_init__(self) -> None:
         """Lift optimization parameters from `self.vla` for ease of use =>> validate on `expected_world_size`"""
@@ -247,6 +252,9 @@ def train(cfg: TrainConfig) -> None:
         action_tokenizer,
         metrics,
         save_interval=cfg.save_interval,
+        compute_importance=cfg.compute_importance,
+        importance_compute_steps=cfg.importance_compute_steps,
+        importance_fn=compute_importance_full,
     )
 
     # Finalize
